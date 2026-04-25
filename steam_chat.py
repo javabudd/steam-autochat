@@ -206,6 +206,53 @@ class ChatSession:
 
         return text, commit
 
+    def generate_outgoing(self):
+        """Generate a proactive outgoing message based on conversation history
+        (no incoming message to reply to). Returns (text, commit) — `commit()`
+        persists only the assistant turn, and is a no-op if /reset or /friend
+        invalidated the snapshot mid-generation."""
+        with self._lock:
+            history_snapshot = list(self.history)
+            generation = self._generation
+            persona = self._persona
+
+        # Anthropic requires the last turn to be `user`. After a normal flow,
+        # history's last turn is `assistant` (or history is empty), so we
+        # inject a meta nudge as a user turn that is NOT persisted to history.
+        if not history_snapshot:
+            nudge = (
+                "[Open the conversation with a casual message to your friend. "
+                "Just the message — no narration, no quotes.]"
+            )
+        elif history_snapshot[-1]["role"] == "assistant":
+            nudge = (
+                "[Send the next message yourself, unprompted. Continue "
+                "naturally from prior context, or pivot if it's stale. "
+                "Just the message — no narration, no quotes.]"
+            )
+        else:
+            nudge = None
+
+        if nudge is not None:
+            history_snapshot.append({"role": "user", "content": nudge})
+
+        prompt = f"{self._base}\n\n{persona}"
+        text = self.backend.generate(prompt, history_snapshot)
+        text = " ".join(text.split())
+
+        def commit() -> None:
+            with self._lock:
+                if self._generation != generation:
+                    return
+                if self.history and self.history[-1]["role"] == "assistant":
+                    self.history[-1]["content"] += "\n" + text
+                else:
+                    self.history.append({"role": "assistant", "content": text})
+                if len(self.history) > 40:
+                    self.history = self.history[-40:]
+
+        return text, commit
+
 
 class MessageBuffer:
     """Debounce inbound messages so a flurry coalesces into one LLM call."""
@@ -666,21 +713,35 @@ def _command_loop(chat: "ChatSession", steam: SteamClient, buffer, shutdown) -> 
                 print(f"[*] Now auto-replying to: {arg} (history cleared)")
                 _resolve_friend(steam, arg)
         elif cmd == "say":
-            if not arg:
-                print("[!] Usage: /say <message>")
-                continue
             friend_name = chat.get_friend()
             match = _find_friend(steam, friend_name)
             if not match:
                 print(f"[!] '{friend_name}' is not in your friends list — cannot send.")
                 continue
-            try:
-                match.send_message(arg)
-            except Exception as e:
-                print(f"[!] Failed to send: {e}")
-                continue
-            chat.append_assistant(arg)
-            print(f"<you>  {arg}")
+            if arg:
+                try:
+                    match.send_message(arg)
+                except Exception as e:
+                    print(f"[!] Failed to send: {e}")
+                    continue
+                chat.append_assistant(arg)
+                print(f"<you>  {arg}")
+            else:
+                try:
+                    message, commit = chat.generate_outgoing()
+                except chat.backend.error_type as e:
+                    print(f"[!] Backend error: {e}")
+                    continue
+                if not message:
+                    print("[!] Empty reply from backend, skipping.")
+                    continue
+                try:
+                    match.send_message(message)
+                except Exception as e:
+                    print(f"[!] Failed to send: {e}")
+                    continue
+                commit()
+                print(f"<you>  {message}")
         elif cmd == "reset":
             chat.reset_history()
             if buffer is not None:
@@ -689,6 +750,7 @@ def _command_loop(chat: "ChatSession", steam: SteamClient, buffer, shutdown) -> 
         elif cmd in ("help", "?"):
             print("Runtime commands:")
             print("  /say <message>    Send a message to the current friend as yourself")
+            print("  /say              Generate and send a follow-up from conversation context")
             print("  /preset <name>    Switch to a built-in or saved persona")
             print("  /preset           Show current preset and list available")
             print("  /preset save <name>    Save current persona to .presets/")
