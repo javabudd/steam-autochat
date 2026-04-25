@@ -7,6 +7,7 @@ Usage: python steam_chat.py <friend_persona_name> [--backend claude|ollama] [opt
 """
 
 import argparse
+import json
 import os
 import signal
 import sys
@@ -18,6 +19,8 @@ from steam.client.user import SteamUser
 
 
 CREDENTIAL_DIR = Path.home() / ".steam_chat" / "credentials"
+PRESETS_DIR = Path(__file__).resolve().parent / ".presets"
+PRESETS_FILE = PRESETS_DIR / "presets.json"
 
 BASE_PROMPT = (
     "You are chatting with a friend on Steam. Reply casually and naturally, "
@@ -317,6 +320,40 @@ def _save_login_key(username: str, key: str) -> None:
         pass
 
 
+def _load_saved_presets() -> dict[str, str]:
+    if not PRESETS_FILE.exists():
+        return {}
+    try:
+        data = json.loads(PRESETS_FILE.read_text())
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"[!] Failed to read {PRESETS_FILE}: {e}. Ignoring saved presets.")
+        return {}
+    if not isinstance(data, dict):
+        print(f"[!] {PRESETS_FILE} is not a JSON object. Ignoring saved presets.")
+        return {}
+    return {str(k): str(v) for k, v in data.items() if isinstance(v, str)}
+
+
+def _write_saved_presets(presets: dict[str, str]) -> None:
+    PRESETS_DIR.mkdir(parents=True, exist_ok=True)
+    PRESETS_FILE.write_text(json.dumps(presets, indent=2, sort_keys=True) + "\n")
+
+
+def _save_preset(name: str, text: str) -> None:
+    presets = _load_saved_presets()
+    presets[name] = text
+    _write_saved_presets(presets)
+
+
+def _delete_saved_preset(name: str) -> bool:
+    presets = _load_saved_presets()
+    if name not in presets:
+        return False
+    del presets[name]
+    _write_saved_presets(presets)
+    return True
+
+
 def _detect_cached_username() -> str | None:
     if not CREDENTIAL_DIR.exists():
         return None
@@ -353,16 +390,20 @@ def _clear_cached_session(username: str | None) -> None:
 
 
 def main():
+    saved_presets = _load_saved_presets()
+    available_presets = {**PERSONAS, **saved_presets}
+
     parser = argparse.ArgumentParser(description="AI-driven Steam chat bot")
     parser.add_argument("friend", help="Friend's Steam persona name (case-insensitive)")
     parser.add_argument("--username", help="Your Steam account name")
     parser.add_argument(
         "--preset",
-        choices=sorted(PERSONAS.keys()),
+        choices=sorted(available_presets.keys()),
         default=DEFAULT_PRESET,
         help=(
-            f"Built-in persona to layer on top of the base prompt "
-            f"(default: {DEFAULT_PRESET}). Ignored if --persona is passed."
+            f"Persona to layer on top of the base prompt (default: "
+            f"{DEFAULT_PRESET}). Includes built-in presets and any saved in "
+            f"{PRESETS_FILE.name}. Ignored if --persona is passed."
         ),
     )
     parser.add_argument(
@@ -422,7 +463,7 @@ def main():
         persona_text = args.persona
         persona_label = "custom"
     else:
-        persona_text = PERSONAS[args.preset]
+        persona_text = available_presets[args.preset]
         persona_label = args.preset
 
     steam = SteamClient()
@@ -535,15 +576,55 @@ def _command_loop(chat: "ChatSession", steam: SteamClient, buffer, shutdown) -> 
         arg = parts[1].strip() if len(parts) > 1 else ""
 
         if cmd == "preset":
+            sub_parts = arg.split(maxsplit=1)
+            sub = sub_parts[0].lower() if sub_parts else ""
+            sub_arg = sub_parts[1].strip() if len(sub_parts) > 1 else ""
+            saved = _load_saved_presets()
+            available = {**PERSONAS, **saved}
             if not arg:
                 _, current = chat.get_persona()
                 print(f"[*] Current preset: {current}")
-                print(f"    Available: {', '.join(sorted(PERSONAS))}")
-            elif arg in PERSONAS:
-                chat.set_persona(PERSONAS[arg], arg)
+                print(f"    Built-in: {', '.join(sorted(PERSONAS))}")
+                if saved:
+                    print(f"    Saved:    {', '.join(sorted(saved))}")
+                else:
+                    print(f"    Saved:    (none — use /preset save <name>)")
+            elif sub == "save":
+                if not sub_arg:
+                    print("[!] Usage: /preset save <name>")
+                    continue
+                if sub_arg in PERSONAS:
+                    print(f"[!] '{sub_arg}' is a built-in preset name. Choose a different name.")
+                    continue
+                text, _ = chat.get_persona()
+                try:
+                    _save_preset(sub_arg, text)
+                except OSError as e:
+                    print(f"[!] Failed to save preset: {e}")
+                    continue
+                print(f"[*] Saved current persona as '{sub_arg}' in {PRESETS_FILE}.")
+            elif sub == "delete":
+                if not sub_arg:
+                    print("[!] Usage: /preset delete <name>")
+                    continue
+                if sub_arg in PERSONAS:
+                    print(f"[!] '{sub_arg}' is a built-in preset and cannot be deleted.")
+                    continue
+                try:
+                    removed = _delete_saved_preset(sub_arg)
+                except OSError as e:
+                    print(f"[!] Failed to delete preset: {e}")
+                    continue
+                if removed:
+                    print(f"[*] Deleted saved preset '{sub_arg}'.")
+                else:
+                    print(f"[!] No saved preset named '{sub_arg}'.")
+            elif arg in available:
+                chat.set_persona(available[arg], arg)
                 print(f"[*] Persona switched to '{arg}'.")
             else:
-                print(f"[!] Unknown preset '{arg}'. Available: {', '.join(sorted(PERSONAS))}")
+                print(f"[!] Unknown preset '{arg}'. Built-in: {', '.join(sorted(PERSONAS))}."
+                      + (f" Saved: {', '.join(sorted(saved))}." if saved else ""))
         elif cmd == "persona":
             if not arg:
                 text, label = chat.get_persona()
@@ -584,8 +665,10 @@ def _command_loop(chat: "ChatSession", steam: SteamClient, buffer, shutdown) -> 
         elif cmd in ("help", "?"):
             print("Runtime commands:")
             print("  /say <message>    Send a message to the current friend as yourself")
-            print("  /preset <name>    Switch to a built-in persona")
+            print("  /preset <name>    Switch to a built-in or saved persona")
             print("  /preset           Show current preset and list available")
+            print("  /preset save <name>    Save current persona to .presets/")
+            print("  /preset delete <name>  Delete a saved preset")
             print("  /persona <text>   Set a custom persona")
             print("  /persona          Show current persona")
             print("  /friend <name>    Switch the friend to auto-reply to")
