@@ -10,6 +10,7 @@ import argparse
 import os
 import signal
 import sys
+import threading
 from pathlib import Path
 
 from steam.client import SteamClient
@@ -125,14 +126,39 @@ class OllamaBackend:
 
 
 class ChatSession:
-    def __init__(self, system_prompt: str, backend):
-        self.system_prompt = system_prompt
+    def __init__(self, base_prompt: str, persona_text: str, persona_label: str, friend_name: str, backend):
+        self._base = base_prompt
+        self._persona = persona_text
+        self._friend = friend_name
+        self.persona_label = persona_label
         self.backend = backend
         self.history: list[dict] = []
+        self._lock = threading.Lock()
+
+    def set_persona(self, text: str, label: str) -> None:
+        with self._lock:
+            self._persona = text
+            self.persona_label = label
+
+    def get_persona(self) -> tuple[str, str]:
+        with self._lock:
+            return self._persona, self.persona_label
+
+    def reset_history(self) -> None:
+        self.history = []
+
+    def system_prompt(self) -> str:
+        with self._lock:
+            persona = self._persona
+        return (
+            f"{self._base}\n\n"
+            f"{persona}\n\n"
+            f"The person you're chatting with is named '{self._friend}'."
+        )
 
     def reply(self, message: str) -> str:
         self.history.append({"role": "user", "content": message})
-        text = self.backend.generate(self.system_prompt, self.history)
+        text = self.backend.generate(self.system_prompt(), self.history)
         self.history.append({"role": "assistant", "content": text})
         if len(self.history) > 40:
             self.history = self.history[-40:]
@@ -312,25 +338,29 @@ def main():
 
     target_name = args.friend.strip().lower()
 
-    persona_text = args.persona if args.persona else PERSONAS[args.preset]
-    system_prompt = (
-        f"{BASE_PROMPT}\n\n"
-        f"{persona_text}\n\n"
-        f"The person you're chatting with is named '{args.friend}'."
-    )
+    if args.persona:
+        persona_text = args.persona
+        persona_label = "custom"
+    else:
+        persona_text = PERSONAS[args.preset]
+        persona_label = args.preset
 
     steam = SteamClient()
-    chat = ChatSession(system_prompt=system_prompt, backend=backend)
-
-    persona_label = "custom" if args.persona else args.preset
+    chat = ChatSession(
+        base_prompt=BASE_PROMPT,
+        persona_text=persona_text,
+        persona_label=persona_label,
+        friend_name=args.friend,
+        backend=backend,
+    )
 
     @steam.on("logged_on")
     def handle_logged_on():
         print(f"[+] Logged on as {steam.user.name} (SteamID {steam.steam_id})")
         print(f"[*] Backend: {backend.describe()}")
-        print(f"[*] Persona: {persona_label}")
+        print(f"[*] Persona: {chat.persona_label}")
         print(f"[*] Auto-replying to messages from: {args.friend}")
-        print("[*] Press Ctrl+C to exit.")
+        print("[*] Type /help for runtime commands. Ctrl+C to exit.")
 
     @steam.friends.on("ready")
     def handle_friends_ready():
@@ -373,8 +403,64 @@ def main():
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
 
+    threading.Thread(
+        target=_command_loop,
+        args=(chat, shutdown),
+        daemon=True,
+    ).start()
+
     login(steam, args.username, fresh=args.fresh_login)
     steam.run_forever()
+
+
+def _command_loop(chat: "ChatSession", shutdown) -> None:
+    """Read /commands from stdin and apply them to the running session."""
+    while True:
+        try:
+            line = input()
+        except EOFError:
+            return
+        line = line.strip()
+        if not line or not line.startswith("/"):
+            continue
+
+        parts = line[1:].split(maxsplit=1)
+        cmd = parts[0].lower()
+        arg = parts[1].strip() if len(parts) > 1 else ""
+
+        if cmd == "preset":
+            if not arg:
+                print(f"[!] Usage: /preset <{'|'.join(sorted(PERSONAS))}>")
+            elif arg in PERSONAS:
+                chat.set_persona(PERSONAS[arg], arg)
+                print(f"[*] Persona switched to '{arg}'.")
+            else:
+                print(f"[!] Unknown preset '{arg}'. Available: {', '.join(sorted(PERSONAS))}")
+        elif cmd == "persona":
+            if not arg:
+                text, label = chat.get_persona()
+                print(f"[*] Current persona ({label}):\n    {text}")
+            else:
+                chat.set_persona(arg, "custom")
+                print("[*] Persona switched to custom text.")
+        elif cmd == "list":
+            print("Presets: " + ", ".join(sorted(PERSONAS)))
+        elif cmd == "reset":
+            chat.reset_history()
+            print("[*] Conversation history cleared.")
+        elif cmd in ("help", "?"):
+            print("Runtime commands:")
+            print("  /preset <name>    Switch to a built-in persona")
+            print("  /persona <text>   Set a custom persona")
+            print("  /persona          Show current persona")
+            print("  /list             List built-in presets")
+            print("  /reset            Clear conversation history")
+            print("  /quit             Shut down")
+        elif cmd in ("quit", "exit"):
+            shutdown()
+            return
+        else:
+            print(f"[!] Unknown command '/{cmd}'. Try /help.")
 
 
 if __name__ == "__main__":

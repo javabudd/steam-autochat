@@ -177,6 +177,24 @@ python steam_chat.py "FriendName" --preset hype --backend ollama
 Need something specific? `--persona "You're a laconic DOTA player who only
 talks about TI"` overrides the preset entirely while keeping the base rules.
 
+### Switch personas while the bot is running
+
+The terminal where the bot is running accepts slash-commands. Type one and
+press Enter:
+
+| Command | Effect |
+|---|---|
+| `/preset <name>` | Switch to a built-in persona |
+| `/persona <text>` | Set a custom persona |
+| `/persona` | Print the current persona |
+| `/list` | List built-in presets |
+| `/reset` | Clear conversation history |
+| `/help` | Show runtime commands |
+| `/quit` | Shut down |
+
+Persona switches affect future replies; existing conversation history is
+preserved. Use `/reset` if you want the next reply to start fresh.
+
 ## Caveats
 
 1. Persona name matching is case-insensitive but must match exactly. If your
