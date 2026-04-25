@@ -187,13 +187,17 @@ press Enter:
 | `/preset <name>` | Switch to a built-in persona |
 | `/persona <text>` | Set a custom persona |
 | `/persona` | Print the current persona |
+| `/friend <name>` | Switch which friend the bot auto-replies to (clears history) |
+| `/friend` | Print the current target friend |
 | `/list` | List built-in presets |
 | `/reset` | Clear conversation history |
 | `/help` | Show runtime commands |
 | `/quit` | Shut down |
 
 Persona switches affect future replies; existing conversation history is
-preserved. Use `/reset` if you want the next reply to start fresh.
+preserved. Switching the target friend clears history automatically since
+it's a different conversation. Use `/reset` to clear history without
+changing persona or friend.
 
 ## Caveats
 

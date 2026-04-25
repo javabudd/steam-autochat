@@ -144,16 +144,32 @@ class ChatSession:
         with self._lock:
             return self._persona, self.persona_label
 
+    def set_friend(self, name: str) -> None:
+        with self._lock:
+            self._friend = name
+        # Different person → different conversation. Don't carry old history.
+        self.history = []
+
+    def get_friend(self) -> str:
+        with self._lock:
+            return self._friend
+
+    def target_name(self) -> str:
+        """Lowercased friend name for matching incoming messages."""
+        with self._lock:
+            return self._friend.lower()
+
     def reset_history(self) -> None:
         self.history = []
 
     def system_prompt(self) -> str:
         with self._lock:
             persona = self._persona
+            friend = self._friend
         return (
             f"{self._base}\n\n"
             f"{persona}\n\n"
-            f"The person you're chatting with is named '{self._friend}'."
+            f"The person you're chatting with is named '{friend}'."
         )
 
     def reply(self, message: str) -> str:
@@ -336,8 +352,6 @@ def main():
         print(f"[!] {e}")
         sys.exit(1)
 
-    target_name = args.friend.strip().lower()
-
     if args.persona:
         persona_text = args.persona
         persona_label = "custom"
@@ -359,26 +373,16 @@ def main():
         print(f"[+] Logged on as {steam.user.name} (SteamID {steam.steam_id})")
         print(f"[*] Backend: {backend.describe()}")
         print(f"[*] Persona: {chat.persona_label}")
-        print(f"[*] Auto-replying to messages from: {args.friend}")
+        print(f"[*] Auto-replying to messages from: {chat.get_friend()}")
         print("[*] Type /help for runtime commands. Ctrl+C to exit.")
 
     @steam.friends.on("ready")
     def handle_friends_ready():
-        match = next(
-            (f for f in steam.friends if f.name and f.name.lower() == target_name),
-            None,
-        )
-        if match:
-            print(f"[+] Target friend resolved: {match.name} ({match.steam_id})")
-        else:
-            print(
-                f"[!] Friend '{args.friend}' not in your friends list. "
-                "Will still reply if they message you."
-            )
+        _resolve_friend(steam, chat.get_friend())
 
     @steam.on("chat_message")
     def handle_message(user: SteamUser, text: str):
-        if not user.name or user.name.lower() != target_name:
+        if not user.name or user.name.lower() != chat.target_name():
             return
         print(f"<{user.name}> {text}")
         try:
@@ -405,7 +409,7 @@ def main():
 
     threading.Thread(
         target=_command_loop,
-        args=(chat, shutdown),
+        args=(chat, steam, shutdown),
         daemon=True,
     ).start()
 
@@ -413,7 +417,27 @@ def main():
     steam.run_forever()
 
 
-def _command_loop(chat: "ChatSession", shutdown) -> None:
+def _resolve_friend(steam: SteamClient, name: str) -> None:
+    """Look up a persona name in the friends list and print resolution status."""
+    target = name.lower()
+    try:
+        match = next(
+            (f for f in list(steam.friends) if f.name and f.name.lower() == target),
+            None,
+        )
+    except RuntimeError:
+        # friends list mutated mid-iteration; skip resolution
+        return
+    if match:
+        print(f"[+] '{name}' resolved to {match.name} (SteamID {match.steam_id})")
+    else:
+        print(
+            f"[!] '{name}' is not in your friends list. "
+            "Will still reply if they message you."
+        )
+
+
+def _command_loop(chat: "ChatSession", steam: SteamClient, shutdown) -> None:
     """Read /commands from stdin and apply them to the running session."""
     while True:
         try:
@@ -443,6 +467,13 @@ def _command_loop(chat: "ChatSession", shutdown) -> None:
             else:
                 chat.set_persona(arg, "custom")
                 print("[*] Persona switched to custom text.")
+        elif cmd == "friend":
+            if not arg:
+                print(f"[*] Currently auto-replying to: {chat.get_friend()}")
+            else:
+                chat.set_friend(arg)
+                print(f"[*] Now auto-replying to: {arg} (history cleared)")
+                _resolve_friend(steam, arg)
         elif cmd == "list":
             print("Presets: " + ", ".join(sorted(PERSONAS)))
         elif cmd == "reset":
@@ -453,6 +484,8 @@ def _command_loop(chat: "ChatSession", shutdown) -> None:
             print("  /preset <name>    Switch to a built-in persona")
             print("  /persona <text>   Set a custom persona")
             print("  /persona          Show current persona")
+            print("  /friend <name>    Switch the friend to auto-reply to")
+            print("  /friend           Show current target friend")
             print("  /list             List built-in presets")
             print("  /reset            Clear conversation history")
             print("  /quit             Shut down")
