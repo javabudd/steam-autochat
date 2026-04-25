@@ -458,7 +458,9 @@ def _command_loop(chat: "ChatSession", steam: SteamClient, shutdown) -> None:
 
         if cmd == "preset":
             if not arg:
-                print(f"[!] Usage: /preset <{'|'.join(sorted(PERSONAS))}>")
+                _, current = chat.get_persona()
+                print(f"[*] Current preset: {current}")
+                print(f"    Available: {', '.join(sorted(PERSONAS))}")
             elif arg in PERSONAS:
                 chat.set_persona(PERSONAS[arg], arg)
                 print(f"[*] Persona switched to '{arg}'.")
@@ -478,19 +480,17 @@ def _command_loop(chat: "ChatSession", steam: SteamClient, shutdown) -> None:
                 chat.set_friend(arg)
                 print(f"[*] Now auto-replying to: {arg} (history cleared)")
                 _resolve_friend(steam, arg)
-        elif cmd == "list":
-            print("Presets: " + ", ".join(sorted(PERSONAS)))
         elif cmd == "reset":
             chat.reset_history()
             print("[*] Conversation history cleared.")
         elif cmd in ("help", "?"):
             print("Runtime commands:")
             print("  /preset <name>    Switch to a built-in persona")
+            print("  /preset           Show current preset and list available")
             print("  /persona <text>   Set a custom persona")
             print("  /persona          Show current persona")
             print("  /friend <name>    Switch the friend to auto-reply to")
             print("  /friend           Show current target friend")
-            print("  /list             List built-in presets")
             print("  /reset            Clear conversation history")
             print("  /quit             Shut down")
         elif cmd in ("quit", "exit"):

@@ -185,11 +185,11 @@ press Enter:
 | Command | Effect |
 |---|---|
 | `/preset <name>` | Switch to a built-in persona |
+| `/preset` | Show current preset and list available |
 | `/persona <text>` | Set a custom persona |
 | `/persona` | Print the current persona |
 | `/friend <name>` | Switch which friend the bot auto-replies to (clears history) |
 | `/friend` | Print the current target friend |
-| `/list` | List built-in presets |
 | `/reset` | Clear conversation history |
 | `/help` | Show runtime commands |
 | `/quit` | Shut down |
