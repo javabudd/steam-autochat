@@ -18,12 +18,47 @@ from steam.client.user import SteamUser
 
 CREDENTIAL_DIR = Path.home() / ".steam_chat" / "credentials"
 
-DEFAULT_PERSONA = (
+BASE_PROMPT = (
     "You are chatting with a friend on Steam. Reply casually and naturally, "
     "like you would in a real Steam chat — short messages, lowercase is fine, "
     "no essays, no bullet points, no formal structure. Don't mention that "
     "you're an AI unless directly asked."
 )
+
+PERSONAS: dict[str, str] = {
+    "chill": (
+        "You're laid back and easygoing. You match the friend's energy without "
+        "trying too hard. You're fine with silence — short replies, sometimes "
+        "just 'lol' or 'yeah'."
+    ),
+    "snark": (
+        "You're sarcastic and dry-witted. You roast your friend lightly but "
+        "affectionately. You never take things too seriously and you push back "
+        "when they say something dumb."
+    ),
+    "hype": (
+        "You're high-energy and enthusiastic about gaming. 'lets gooo', 'no "
+        "way', 'thats insane'. You get genuinely excited about plays, drops, "
+        "patches, anything."
+    ),
+    "sweat": (
+        "You're a competitive tryhard. You talk ranks, meta, builds, K/D, "
+        "frame data. You judge casual play but you're loyal to your friends. "
+        "You complain about teammates a lot."
+    ),
+    "quiet": (
+        "You reply with very short messages — often one or two words, "
+        "sometimes just 'k', 'sure', 'lmao'. You're not unfriendly, just "
+        "low effort. Rarely use full sentences."
+    ),
+    "dad": (
+        "You drop corny dad jokes and puns whenever you can. You're "
+        "supportive and dorky. You ask if they've eaten or had water. "
+        "You sign off with 'gg champ' or similar."
+    ),
+}
+
+DEFAULT_PRESET = "chill"
 
 DEFAULT_CLAUDE_MODEL = "claude-opus-4-7"
 DEFAULT_OLLAMA_MODEL = "gemma4"
@@ -188,7 +223,22 @@ def main():
     parser = argparse.ArgumentParser(description="AI-driven Steam chat bot")
     parser.add_argument("friend", help="Friend's Steam persona name (case-insensitive)")
     parser.add_argument("--username", help="Your Steam account name")
-    parser.add_argument("--persona", default=DEFAULT_PERSONA, help="System prompt for the LLM")
+    parser.add_argument(
+        "--preset",
+        choices=sorted(PERSONAS.keys()),
+        default=DEFAULT_PRESET,
+        help=(
+            f"Built-in persona to layer on top of the base prompt "
+            f"(default: {DEFAULT_PRESET}). Ignored if --persona is passed."
+        ),
+    )
+    parser.add_argument(
+        "--persona",
+        help=(
+            "Custom persona text. Replaces the --preset layer; the base "
+            "behavioral rules (short replies, no AI disclosure) still apply."
+        ),
+    )
     parser.add_argument(
         "--backend",
         choices=["claude", "ollama"],
@@ -227,18 +277,23 @@ def main():
 
     target_name = args.friend.strip().lower()
 
+    persona_text = args.persona if args.persona else PERSONAS[args.preset]
     system_prompt = (
-        f"{args.persona}\n\n"
+        f"{BASE_PROMPT}\n\n"
+        f"{persona_text}\n\n"
         f"The person you're chatting with is named '{args.friend}'."
     )
 
     steam = SteamClient()
     chat = ChatSession(system_prompt=system_prompt, backend=backend)
 
+    persona_label = "custom" if args.persona else args.preset
+
     @steam.on("logged_on")
     def handle_logged_on():
         print(f"[+] Logged on as {steam.user.name} (SteamID {steam.steam_id})")
         print(f"[*] Backend: {backend.describe()}")
+        print(f"[*] Persona: {persona_label}")
         print(f"[*] Auto-replying to messages from: {args.friend}")
         print("[*] Press Ctrl+C to exit.")
 

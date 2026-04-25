@@ -152,9 +152,30 @@ Guard login. To force a fresh login manually, pass `--fresh-login`.
 - `--ollama-host <url>` — Ollama server URL (default: `http://localhost:11434`)
 - `--thinking` — enable adaptive thinking (claude only)
 - `--username <steam-user>` — pass your Steam account name (skips one prompt)
-- `--persona "..."` — override the system prompt
-  (e.g. `"You're a laconic DOTA player, short replies only"`)
+- `--preset <name>` — pick a built-in persona (see below; default: `chill`)
+- `--persona "..."` — custom persona text, replaces the preset layer (the
+  base "keep replies short, don't reveal AI" rules still apply)
 - `--fresh-login` — clear cached session and force a Steam Guard login
+
+## Personas
+
+The system prompt is layered: a fixed base (short replies, casual tone, no
+AI disclosure) plus a swappable persona. Pick one with `--preset`:
+
+- `chill` (default) — laid back, low effort, matches energy
+- `snark` — sarcastic, dry-witted, lightly roasts the friend
+- `hype` — high-energy, enthusiastic, "lets gooo"
+- `sweat` — competitive tryhard, talks ranks/meta/builds
+- `quiet` — minimal one-or-two-word replies
+- `dad` — corny dad jokes, supportive, dorky
+
+```
+python steam_chat.py "FriendName" --preset snark
+python steam_chat.py "FriendName" --preset hype --backend ollama
+```
+
+Need something specific? `--persona "You're a laconic DOTA player who only
+talks about TI"` overrides the preset entirely while keeping the base rules.
 
 ## Caveats
 
