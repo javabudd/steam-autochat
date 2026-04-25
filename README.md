@@ -138,16 +138,16 @@ Guard login. To force a fresh login manually, pass `--fresh-login`.
 - Maintains conversation history (last 40 turns) so the LLM has context.
 - Messages from other friends are ignored; only the named friend gets
   auto-replies.
-- Claude default: `claude-opus-4-7` with thinking disabled for fast replies.
-  Add `--thinking` for smarter-but-slower answers, or `--model claude-sonnet-4-6`
-  for a cheaper chat model.
+- Claude default: `claude-sonnet-4-6` with thinking disabled for fast replies.
+  Add `--thinking` for smarter-but-slower answers, or `--model claude-opus-4-7`
+  for a more capable model.
 - Ollama default: `gemma4:26b` at `http://localhost:11434`. Any model you have
   pulled will work (`--model llama3.2`, `--model qwen2.5`, etc.).
 
 ## Flags
 
 - `--backend {claude,ollama}` — choose the LLM backend (default: `claude`)
-- `--model <id>` — override the model. Claude default: `claude-opus-4-7`.
+- `--model <id>` — override the model. Claude default: `claude-sonnet-4-6`.
   Ollama default: `gemma4:26b`.
 - `--ollama-host <url>` — Ollama server URL (default: `http://localhost:11434`)
 - `--thinking` — enable adaptive thinking (claude only)
